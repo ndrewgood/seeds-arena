@@ -17,14 +17,7 @@
 
 <div class="screen">
 	<div class="card">
-		<div class="mark">
-			<svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
-				<path
-					d="M16 7c4 3.2 6 6.2 6 9.2A6 6 0 0 1 16 22a6 6 0 0 1-6-5.8C10 13.2 12 10.2 16 7Z"
-					fill="currentColor"
-				/>
-			</svg>
-		</div>
+		<div class="mark" aria-hidden="true">🌱</div>
 
 		<h1>Seeds</h1>
 		<p class="lede">A quiet, visual way to browse your Are.na channels.</p>
@@ -90,9 +83,8 @@
 	.mark {
 		width: 44px;
 		height: 44px;
-		border-radius: 12px;
-		background: var(--text);
-		color: #fff;
+		font-size: 36px;
+		line-height: 1;
 		display: grid;
 		place-items: center;
 		margin-bottom: 18px;
