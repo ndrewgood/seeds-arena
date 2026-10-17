@@ -19,6 +19,17 @@ npm run dev
 
 Requires Node ≥ 20.19 / 22.12.
 
+## Deploy to Vercel
+
+The app uses `adapter-static` and writes its production files to `build/`, not `public/`.
+The included `vercel.json` sets the build command to `npm run build`, the output directory
+to `build`, and an SPA fallback to `index.html` for direct links such as `/c/<slug>` and
+`/auth/callback`. Existing static assets are served normally.
+
+Set Vercel's **Root Directory** to the directory containing `package.json` and `vercel.json`,
+then redeploy. If configuring the project manually, use **Build Command** `npm run build`
+and **Output Directory** `build`.
+
 ## Signing in
 
 Seeds asks for an Are.na **personal access token** with the **`write`** scope (read *and* write)
