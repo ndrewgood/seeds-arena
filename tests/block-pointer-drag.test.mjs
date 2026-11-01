@@ -13,13 +13,18 @@ const dnd = {
 };
 const api = {
 	BLOCK_MIME, dnd,
-	blockDragFor(item, source) {
+	blockDragFor(item, source, selected) {
+		api.lastSelected = selected;
 		return item.type === 'Channel' ? null : {
 			kind: 'block', blockId: item.id, connectionId: item.connection?.id ?? null,
-			sourceSlug: source.slug, sourceId: source.id
+			sourceSlug: source.slug, sourceId: source.id,
+			...(selected?.some((block) => block.id === item.id) && selected.length > 1
+				? { blocks: selected.map((block) => ({ blockId: block.id, connectionId: block.connection?.id ?? null })) }
+				: {})
 		};
 	},
-	createBlockDragPreview() {
+	createBlockDragPreview(node, count) {
+		api.lastPreviewCount = count;
 		const preview = new Element('div');
 		Object.assign(preview.style, { position: 'fixed', pointerEvents: 'none', opacity: '0.5' });
 		return preview;
@@ -181,6 +186,7 @@ test('Command pointerup delivers exactly one synthetic block drop without any na
 	assert.equal(f.document.body.style.cursor, 'copy');
 	const preview = f.document.body.children[2];
 	assert.equal(preview.style.pointerEvents, 'none');
+	assert.equal(api.lastPreviewCount, 1);
 	assert.equal(preview.style.left, '30px');
 	f.emit('pointerup', { metaKey: true, clientX: 40 });
 	f.emit('pointerup', { metaKey: true });
@@ -195,6 +201,19 @@ test('Command pointerup delivers exactly one synthetic block drop without any na
 	assert.equal(preview.parentElement, null);
 	assert.equal(f.emit('click', {}, f.tile).defaultPrevented, true);
 	assert.equal(f.window.listeners.length, 0);
+	f.assertClean();
+});
+
+test('pointer dragging resolves the current selection at the drag threshold', () => {
+	const f = fixture();
+	const item = { id: 5, type: 'Image', connection: { id: 9 } };
+	const selected = [item, { id: 6, type: 'Text', connection: { id: 10 } }];
+	f.emit('pointerdown', {}, f.tile);
+	f.action.update({ item, source: { slug: 'source', id: 1 }, selected });
+	f.emit('pointermove', { clientX: 18 });
+	assert.equal(api.lastSelected, selected);
+	assert.equal(api.lastPreviewCount, 2);
+	f.emit('pointercancel');
 	f.assertClean();
 });
 

@@ -208,24 +208,12 @@
 		if (node.children.length) ui.expand([node.channel.id]);
 	}
 
-	let folderClick: { id: number; expanded: boolean } | null = null;
-
 	function clickFolder(event: MouseEvent, node: FolderNode) {
-		if (event.detail === 1) {
-			folderClick = { id: node.channel.id, expanded: ui.isExpanded(node.channel.id) };
-		}
+		if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 		nav.clear();
-	}
-
-	function doubleClickFolder(event: MouseEvent, node: FolderNode) {
-		event.preventDefault();
-		if (!node.children.length) return;
-		const wasExpanded = folderClick?.id === node.channel.id
-			? folderClick.expanded : ui.isExpanded(node.channel.id);
-		// The first click may already have navigated and auto-expanded this folder.
+		// Preserve the click's toggle instead of reopening the folder after navigation.
 		lastRevealed = node.channel.slug;
-		if (ui.isExpanded(node.channel.id) === wasExpanded) ui.toggle(node.channel.id);
-		folderClick = null;
+		if (node.children.length && event.detail <= 1) ui.toggle(node.channel.id);
 	}
 </script>
 
@@ -238,7 +226,7 @@
 		class:active={activeSlug === node.channel.slug}
 		class:drop={dnd.over === key}
 		class:dragging={dnd.current?.kind === 'folder' && dnd.current.channelId === node.channel.id}
-		style:padding-left="{depth === 0 && !hasChildren ? 10 : 4 + depth * 14}px"
+		style:padding-left="{10 + depth * 14}px"
 		draggable={renamingId !== node.channel.id && !ui.folderRenaming}
 		role="presentation"
 		oncontextmenu={(e) => openContext(e, node.channel)}
@@ -251,22 +239,8 @@
 			onhold: () => expandFolder(node)
 		}}
 	>
-		{#if depth > 0 || hasChildren}
-		<button
-			class="chevron"
-			class:open
-			class:hidden={!hasChildren}
-			type="button"
-			tabindex={hasChildren ? 0 : -1}
-			aria-label={open ? 'Collapse folder' : 'Expand folder'}
-			aria-expanded={hasChildren ? open : undefined}
-			onclick={() => ui.toggle(node.channel.id)}
-		>
-			<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3.500 4.500 4.500L6 12.500" /></svg>
-		</button>
-		{/if}
+		<span class="folder-slot"><FolderIcon channel={node.channel} /></span>
 		{#if renamingId === node.channel.id}
-			<FolderIcon channel={node.channel} />
 			<RenameFolderInput channel={node.channel} onclose={() => (renamingId = null)} />
 		{:else}
 		<a
@@ -275,12 +249,21 @@
 			draggable="false"
 			title={node.key}
 			onclick={(event) => clickFolder(event, node)}
-			ondblclick={(event) => doubleClickFolder(event, node)}
 		>
-			<FolderIcon channel={node.channel} />
 			<span class="name">{node.label}</span>
-			<span class="count">{node.channel.counts.contents}</span>
 		</a>
+		{#if hasChildren}
+			<button
+				class="folder-toggle"
+				class:open
+				type="button"
+				aria-label={open ? 'Collapse folder' : 'Expand folder'}
+				aria-expanded={open}
+				onclick={() => ui.toggle(node.channel.id)}
+			>
+				<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3.500 4.500 4.500L6 12.500" /></svg>
+			</button>
+		{/if}
 		{/if}
 	</div>
 
@@ -346,6 +329,11 @@
 				<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3" /></svg>
 			</button>
 		{/if}
+		<button class="icon-button close-sidebar" type="button" aria-label="Close sidebar" onclick={() => (ui.sidebarOpen = false)}>
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+				<path d="m6 6 12 12M6 18 18 6" />
+			</svg>
+		</button>
 	</div>
 
 	<nav class="list">
@@ -608,6 +596,8 @@
 		color: var(--muted);
 	}
 
+	.icon-button.close-sidebar { display: none; }
+
 	.brand:hover, .icon-button:hover {
 		background: var(--hover);
 		color: var(--text);
@@ -727,7 +717,7 @@
 	.row {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 8px;
 		height: 28px;
 		padding: 0 10px 0 4px;
 		border-radius: 8px;
@@ -735,7 +725,7 @@
 		position: relative;
 	}
 
-	/* Inbox / channels / setup rows have no chevron gutter. */
+	/* Keep icon-to-label spacing consistent across sidebar rows. */
 	.row.inbox,
 	.row.plain,
 	.row.setup {
@@ -775,6 +765,43 @@
 		color: var(--accent);
 	}
 
+	.folder-slot,
+	.folder-toggle {
+		flex: none;
+		width: 14px;
+		height: 20px;
+		display: grid;
+		place-items: center;
+	}
+
+	.folder-toggle {
+		width: 22px;
+		padding: 0;
+		border: 0;
+		border-radius: 4px;
+		background: none;
+		color: var(--muted);
+	}
+
+	.folder-toggle > svg {
+		transition: transform 0.12s;
+	}
+
+	.folder-toggle.open > svg {
+		transform: rotate(90deg);
+	}
+
+	.folder-toggle:hover {
+		background: var(--active);
+		color: var(--text);
+	}
+
+	.folder-toggle:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+
+
 	.chevron {
 		flex: none;
 		width: 16px;
@@ -788,17 +815,6 @@
 		color: var(--muted);
 	}
 
-	.chevron svg {
-		transition: transform 0.12s;
-	}
-
-	.chevron.open svg {
-		transform: rotate(90deg);
-	}
-
-	.chevron:hover {
-		background: var(--active);
-	}
 
 	.chevron.hidden {
 		visibility: hidden;
@@ -970,5 +986,23 @@
 
 	.menu button:hover {
 		background: var(--hover);
+	}
+
+	@media (max-width: 900px) {
+		.sidebar { font-size: 15px; }
+		.sidebar-header { height: 52px; margin: 0 4px 8px; gap: 4px; }
+		.brand { height: 44px; padding: 0 6px; font-size: 17px; margin-right: auto; }
+		.icon-button, .add, .folder-toggle, .chevron { width: 44px; height: 44px; flex: none; }
+		.icon-button.close-sidebar { display: grid; }
+		.row { height: 44px; padding-right: 0; }
+		.section { height: 44px; padding-right: 0; }
+		.heading { font-size: 13px; }
+		.search { flex: 1; min-width: 0; }
+		.search input { height: 44px; padding-right: 44px; font-size: 16px; }
+		.close-search { top: 0; right: 0; }
+		.draft { height: 36px; font-size: 16px; }
+		.account, .menu button { height: 44px; }
+		.menu { bottom: 58px; }
+		.count, .badge { font-size: 12px; }
 	}
 </style>

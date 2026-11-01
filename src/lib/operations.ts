@@ -299,10 +299,7 @@ export async function removeBlockFromFolder(item: Block, source: DragSource): Pr
 	}
 }
 
-/** Connects a block to the target, keeping its source connection only when copying. */
-export async function moveBlock(drag: BlockDrag, target: Channel, copy: boolean = false): Promise<boolean> {
-	if (target.slug === drag.sourceSlug || target.id === drag.sourceId) return false;
-
+async function moveOneBlock(drag: BlockDrag, target: Channel, copy: boolean): Promise<{ connected: boolean; error?: string }> {
 	// Only moves optimistically remove the block from its source.
 	const restore = copy ? null : removeBlockFromFeeds(drag.sourceSlug, drag.blockId);
 	if (!copy) channels.adjustCount(drag.sourceId, -1);
@@ -314,10 +311,10 @@ export async function moveBlock(drag: BlockDrag, target: Channel, copy: boolean 
 		restore?.();
 		if (!copy) channels.adjustCount(drag.sourceId, 1);
 		channels.adjustCount(target.id, -1);
-		toast.error(`Couldn't ${copy ? 'connect' : 'move'} the block. ${messageOf(e)}`);
-		return false;
+		return { connected: false, error: `Couldn't ${copy ? 'connect' : 'move'} the block. ${messageOf(e)}` };
 	}
 
+	let error: string | undefined;
 	if (!copy && drag.connectionId !== null) {
 		try {
 			await disconnect(drag.connectionId);
@@ -325,15 +322,44 @@ export async function moveBlock(drag: BlockDrag, target: Channel, copy: boolean 
 			// It's in both places now; put the block back in the source grid so the UI matches.
 			restore?.();
 			channels.adjustCount(drag.sourceId, 1);
-			toast.error(`Added to “${displayTitle(target)}” but couldn't remove it from the original. ${messageOf(e)}`);
+			error = `Added to “${displayTitle(target)}” but couldn't remove it from the original. ${messageOf(e)}`;
 		}
 	}
 
-	refreshChannelFeeds(target.slug);
-	previews.invalidate(target.id);
-	if (!copy && drag.sourceId !== null) previews.invalidate(drag.sourceId);
-	if (copy) toast.success(`Connected to “${displayTitle(target)}”`);
-	return true;
+	return { connected: true, error };
+}
+
+/** Connects dragged blocks sequentially. True means at least one connected, even if source removal failed. */
+export async function moveBlock(drag: BlockDrag, target: Channel, copy: boolean = false): Promise<boolean> {
+	if (target.slug === drag.sourceSlug || target.id === drag.sourceId) return false;
+	const blocks = drag.blocks
+		? [...new Map(drag.blocks.map((block) => [block.blockId, block])).values()]
+		: [{ blockId: drag.blockId, connectionId: drag.connectionId }];
+	if (!blocks.length) return false;
+
+	let connected = 0;
+	const errors: string[] = [];
+	// Await each rollback before removing another item: feed undo closures retain item indexes.
+	for (const block of blocks) {
+		const result = await moveOneBlock({ ...drag, ...block }, target, copy);
+		if (result.connected) connected++;
+		if (result.error) errors.push(result.error);
+	}
+
+	if (connected) {
+		refreshChannelFeeds(target.slug);
+		previews.invalidate(target.id);
+		if (!copy && drag.sourceId !== null) previews.invalidate(drag.sourceId);
+	}
+	if (blocks.length === 1) {
+		if (errors.length) toast.error(errors[0]);
+		if (connected && copy) toast.success(`Connected to “${displayTitle(target)}”`);
+	} else if (errors.length) {
+		toast.error(`Added ${connected} of ${blocks.length} blocks to “${displayTitle(target)}”. ${errors.length} ${errors.length === 1 ? 'block' : 'blocks'} could not be fully ${copy ? 'connected' : 'moved'}. ${errors[0]}`);
+	} else {
+		toast.success(`${copy ? 'Connected' : 'Moved'} ${connected} blocks to “${displayTitle(target)}”`);
+	}
+	return connected > 0;
 }
 
 function extensionFor(mime: string) {
@@ -421,7 +447,7 @@ export async function addDropped(drops: Dropped[], channel: Channel): Promise<nu
 }
 
 /**
- * Handles a drop onto a channel/folder/Inbox: either one of Seeds' own blocks (move, or connect with Command) or
+ * Handles a drop onto a channel/folder/Inbox: either Seeds' own blocks (move, or connect with Command) or
  * something from outside (a new block). Call synchronously from the `drop` event.
  */
 export function handleChannelDrop(e: DragEvent, kind: 'block' | 'folder' | 'external', channel: Channel) {

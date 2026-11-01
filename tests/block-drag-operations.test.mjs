@@ -113,6 +113,222 @@ function deferredResponse() {
 	return resolve;
 }
 
+function batchFixture() {
+	const f = fixture();
+	const items = [f.item, ...[1, 2].map((offset) => ({
+		...f.item, id: f.item.id + offset, connection: { id: f.item.connection.id + offset }
+	}))];
+	for (const feed of f.sourceFeeds) feed.items = [...items, f.other];
+	f.sourceItems = f.sourceFeeds.map((feed) => feed.items);
+	return {
+		...f, items,
+		drag: dnd.blockDragFor(f.item, { slug: f.source.slug, id: f.source.id }, items)
+	};
+}
+
+test('batch moves await each connect and disconnect before the next block and refresh only after all writes', async () => {
+	const f = batchFixture();
+	let resolve;
+	respond = () => new Promise((done) => { resolve = done; });
+	const refreshes = [];
+	for (const feed of f.targetFeeds) {
+		feed.started = true;
+		feed.refresh = async () => refreshes.push({ sort: feed.sort, writes: calls.length });
+	}
+	const pending = moveBlock(f.drag, f.target);
+	for (let index = 0; index < 6; index++) {
+		assert.equal(calls.length, index + 1, 'only one write may be in flight');
+		assert.deepEqual(refreshes, []);
+		assert.equal(toast.items.length, 0, 'no per-block notifications');
+		const block = f.items[Math.floor(index / 2)];
+		if (index % 2 === 0) {
+			assert.equal(calls[index].method, 'POST');
+			assert.equal(JSON.parse(calls[index].body).connectable_id, block.id);
+		} else {
+			assert.equal(calls[index].method, 'DELETE');
+			assert.ok(calls[index].url.endsWith(`/connections/${block.connection.id}`));
+		}
+		resolve(Response.json({ data: [] }));
+		await setImmediate();
+	}
+	assert.equal(await pending, true);
+	assert.deepEqual(refreshes, sorts.map((sort) => ({ sort, writes: 6 })));
+	for (const feed of f.sourceFeeds) {
+		assert.deepEqual(feed.items, [f.other]);
+		assert.equal(feed.total, 1);
+	}
+	assert.equal(channels.bySlug(f.source.slug).counts.blocks, 0);
+	assert.equal(channels.bySlug(f.target.slug).counts.blocks, 6);
+	assert.equal(previews.get(f.source.id), undefined);
+	assert.equal(previews.get(f.target.id), undefined);
+	assert.equal(f.otherFeed.items[0].id, f.item.id);
+	assert.equal(toast.items.length, 1);
+	assert.equal(toast.items[0].kind, 'success');
+	assert.match(toast.items[0].text, /Moved 3 blocks to “Destination”/);
+});
+
+test('batch refresh fetches final target contents once per started sort, never intermediate contents', async () => {
+	const f = batchFixture();
+	let writes = 0;
+	for (const feed of f.targetFeeds) {
+		feed.started = true;
+		feed.hasMore = false;
+	}
+	respond = (input, options) => {
+		if (options.method === 'POST') {
+			writes++;
+			return Response.json({ data: [] });
+		}
+		assert.equal(writes, 3, 'refresh must wait for the last connection');
+		const url = new URL(input);
+		if (url.pathname.endsWith('/contents')) {
+			return Response.json({ data: f.items, meta: { total_count: 7, has_more_pages: false } });
+		}
+		return Response.json({ ...f.target, counts: { ...f.target.counts, blocks: 6, contents: 7 } });
+	};
+	assert.equal(await moveBlock(f.drag, f.target, true), true);
+	await setImmediate();
+	assert.equal(calls.filter((call) => new URL(call.url).pathname.endsWith('/contents')).length, sorts.length);
+	for (const feed of f.targetFeeds) {
+		for (const item of f.items) assert.ok(feed.items.some((entry) => entry.id === item.id));
+		assert.equal(feed.total, 7);
+	}
+	assertSourceUntouched(f);
+});
+
+test('batch blocks without source connection IDs connect without issuing a delete for that block', async () => {
+	const f = batchFixture();
+	f.drag.blocks[1].connectionId = null;
+	assert.equal(await moveBlock(f.drag, f.target), true);
+	assert.equal(calls.filter((call) => call.method === 'POST').length, 3);
+	assert.deepEqual(calls.filter((call) => call.method === 'DELETE').map((call) => call.url),
+		[f.items[0], f.items[2]].map((item) => `https://api.are.na/v3/connections/${item.connection.id}`));
+});
+
+test('singleton disconnect failure retains its existing error, successful return and both connections', async () => {
+	const f = fixture();
+	respond = (input, options) => options.method === 'DELETE'
+		? Response.json({ error: 'Disconnect failed' }, { status: 500 })
+		: Response.json({ data: [] });
+	assert.equal(await moveBlock(f.drag, f.target), true);
+	for (const feed of f.sourceFeeds) assert.deepEqual(feed.items, [f.item, f.other]);
+	assert.deepEqual(channels.bySlug(f.source.slug).counts, f.source.counts);
+	assert.equal(channels.bySlug(f.target.slug).counts.blocks, 4);
+	assert.equal(toast.items.length, 1);
+	assert.equal(toast.items[0].kind, 'error');
+	assert.match(toast.items[0].text, /Added to “Destination” but couldn't remove it from the original/);
+});
+
+test('batch copy keeps source caches untouched, connects each distinct block once and emits one toast', async () => {
+	const f = batchFixture();
+	f.drag.blocks.push({ ...f.drag.blocks[0] });
+	assert.equal(await moveBlock(f.drag, f.target, true), true);
+	assert.deepEqual(calls.map((call) => call.method), ['POST', 'POST', 'POST']);
+	assert.deepEqual(calls.map((call) => JSON.parse(call.body).connectable_id), f.items.map((item) => item.id));
+	assertSourceUntouched(f);
+	assert.equal(channels.bySlug(f.target.slug).counts.blocks, 6);
+	assert.equal(previews.get(f.target.id), undefined);
+	assert.equal(toast.items.length, 1);
+	assert.match(toast.items[0].text, /Connected 3 blocks to “Destination”/);
+});
+
+for (const copy of [false, true]) {
+	test(`batch ${copy ? 'copy' : 'move'} continues after a failed connect and rolls back only that block`, async () => {
+		const f = batchFixture();
+		respond = (input, options) => options.method === 'POST' && JSON.parse(options.body).connectable_id === f.items[1].id
+			? Response.json({ error: 'Connect failed' }, { status: 500 })
+			: Response.json({ data: [] });
+		assert.equal(await moveBlock(f.drag, f.target, copy), true);
+		assert.equal(calls.filter((call) => call.method === 'POST').length, 3);
+		assert.equal(calls.filter((call) => call.method === 'DELETE').length, copy ? 0 : 2);
+		if (copy) assertSourceUntouched(f);
+		else {
+			for (const feed of f.sourceFeeds) {
+				assert.deepEqual(feed.items, [f.items[1], f.other]);
+				assert.equal(feed.total, 2);
+			}
+			assert.equal(channels.bySlug(f.source.slug).counts.blocks, 1);
+		}
+		assert.equal(channels.bySlug(f.target.slug).counts.blocks, 5);
+		assert.equal(toast.items.length, 1);
+		assert.equal(toast.items[0].kind, 'error');
+		assert.match(toast.items[0].text, /Added 2 of 3 blocks/);
+		assert.match(toast.items[0].text, /Connect failed/);
+	});
+}
+
+test('batch disconnect failure restores that source block but keeps its successful target connection', async () => {
+	const f = batchFixture();
+	respond = (input, options) => options.method === 'DELETE' && String(input).endsWith(`/${f.items[1].connection.id}`)
+		? Response.json({ error: 'Disconnect failed' }, { status: 500 })
+		: Response.json({ data: [] });
+	assert.equal(await moveBlock(f.drag, f.target), true);
+	assert.deepEqual(calls.map((call) => call.method), ['POST', 'DELETE', 'POST', 'DELETE', 'POST', 'DELETE']);
+	for (const feed of f.sourceFeeds) assert.deepEqual(feed.items, [f.items[1], f.other]);
+	assert.equal(channels.bySlug(f.source.slug).counts.blocks, 1);
+	assert.equal(channels.bySlug(f.target.slug).counts.blocks, 6);
+	assert.equal(toast.items.length, 1);
+	assert.equal(toast.items[0].kind, 'error');
+	assert.match(toast.items[0].text, /Added 3 of 3 blocks/);
+	assert.match(toast.items[0].text, /couldn't remove it from the original/);
+});
+
+test('all failed batch connects restore original ordering and counts without refreshing or invalidating', async () => {
+	const f = batchFixture();
+	respond = () => Response.json({ error: 'Offline' }, { status: 500 });
+	assert.equal(await moveBlock(f.drag, f.target), false);
+	assert.equal(calls.length, 3);
+	for (const feed of f.sourceFeeds) {
+		assert.deepEqual(feed.items, [...f.items, f.other]);
+		assert.equal(feed.total, 4);
+	}
+	assert.deepEqual(channels.bySlug(f.source.slug).counts, f.source.counts);
+	assert.deepEqual(channels.bySlug(f.target.slug).counts, f.target.counts);
+	assert.deepEqual(previews.get(f.source.id), []);
+	assert.deepEqual(previews.get(f.target.id), []);
+	for (const feed of f.targetFeeds) assert.strictEqual(feeds.getFeed(f.target.slug, feed.sort), feed);
+	assert.equal(toast.items.length, 1);
+	assert.match(toast.items[0].text, /Added 0 of 3 blocks/);
+});
+
+test('same-source batches are silent no-ops for both slug and ID, including copies', async () => {
+	const f = batchFixture();
+	for (const copy of [false, true]) {
+		for (const target of [f.source, { ...f.target, id: f.source.id }, { ...f.target, slug: f.source.slug }]) {
+			assert.equal(await moveBlock(f.drag, target, copy), false);
+		}
+	}
+	assert.deepEqual(calls, []);
+	assert.deepEqual(toast.items, []);
+	assertSourceUntouched(f);
+});
+
+for (const dropMetaKey of [false, true]) {
+	test(`batch drop snapshots payload and release copy=${dropMetaKey} synchronously`, async () => {
+		const f = batchFixture();
+		let serialized = JSON.stringify(f.drag);
+		const event = { dataTransfer: { getData: () => serialized }, metaKey: dropMetaKey };
+		handleChannelDrop(event, 'block', f.target);
+		serialized = '';
+		event.metaKey = !dropMetaKey;
+		dnd.dnd.reset();
+		await setImmediate();
+		assert.equal(calls.filter((call) => call.method === 'POST').length, 3);
+		assert.equal(calls.filter((call) => call.method === 'DELETE').length, dropMetaKey ? 0 : 3);
+		assert.equal(toast.items.length, 1);
+		if (dropMetaKey) assertSourceUntouched(f);
+	});
+}
+
+test('malformed batch drop is ignored rather than moving only the anchor', async () => {
+	const f = batchFixture();
+	const dataTransfer = { getData: () => JSON.stringify({ ...f.drag, blocks: [] }) };
+	handleChannelDrop({ dataTransfer, metaKey: false }, 'block', f.target);
+	await setImmediate();
+	assert.deepEqual(calls, []);
+	assert.deepEqual(toast.items, []);
+});
+
 test('default move connects before disconnecting and removes the source across all sorts', async () => {
 	const f = fixture();
 	const resolve = deferredResponse();

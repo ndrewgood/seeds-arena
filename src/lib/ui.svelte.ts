@@ -2,6 +2,10 @@ const KEY = 'seeds.ui';
 
 /** Sidebar chrome that should survive reloads: which sections/folders are open. */
 class Ui {
+	/** Transient responsive chrome; never persisted. */
+	mobile = $state(false);
+	sidebarOpen = $state(false);
+
 	// The Channels section starts collapsed.
 	#channelsOpen = $state(false);
 	#expanded = $state.raw<Set<number>>(new Set());

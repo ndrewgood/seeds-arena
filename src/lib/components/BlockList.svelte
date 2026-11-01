@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { dnd, type DragSource } from '$lib/dnd.svelte';
+	import { isBlockDragging, type DragSource } from '$lib/dnd.svelte';
 		import { blockdrag } from '$lib/blockdrag';
 	import { keyOf } from '$lib/feed.svelte';
 	import { fileExt, imageFor, itemTitle, linkUrl, pickImage, videoSrc } from '$lib/media';
@@ -11,11 +11,13 @@
 	let {
 		items,
 		source,
+		selected = [],
 		onopen,
 		onchannel
 	}: {
 		items: Connectable[];
 		source: DragSource;
+		selected?: Connectable[];
 		onopen: (key: string) => void;
 		onchannel: (channel: Channel) => void;
 	} = $props();
@@ -85,8 +87,11 @@
 				{@const url = linkUrl(item)}
 				<tr
 					draggable={item.type !== 'Channel'}
-					class:dragging={item.type !== 'Channel' && dnd.current?.kind === 'block' && dnd.current.blockId === item.id}
-					use:blockdrag={{ item, source }}
+					class:dragging={item.type !== 'Channel' && isBlockDragging(item.id)}
+					class:selected={item.type !== 'Channel' && selected.some((block) => block.id === item.id)}
+					data-selection-item
+					data-block-id={item.type !== 'Channel' ? item.id : undefined}
+					use:blockdrag={{ item, source, selected }}
 				>
 					<td class="thumbnail-cell">
 						{#if item.type === 'Channel'}
@@ -153,6 +158,21 @@
 
 	tbody tr:hover {
 		background: var(--hover);
+	}
+
+	tbody tr.selected {
+		background: var(--accent-soft);
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		tbody tr.selected { animation: selection-pulse 2s ease-in-out infinite; }
+	}
+
+	@keyframes selection-pulse {
+		0%, 100% { outline-color: var(--accent); }
+		50% { outline-color: color-mix(in srgb, var(--accent) 65%, transparent); }
 	}
 
 	.dragging {

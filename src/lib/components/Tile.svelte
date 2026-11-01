@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { dnd, type DragSource } from '$lib/dnd.svelte';
+	import { isBlockDragging, type DragSource } from '$lib/dnd.svelte';
 		import { blockdrag } from '$lib/blockdrag';
 	import { previews } from '$lib/previews.svelte';
 	import { displayTitle, folderMembers, folderSummary, isFolder } from '$lib/seeds';
@@ -22,11 +22,13 @@
 		item,
 		width,
 		source,
+		selected = [],
 		onopen
 	}: {
 		item: Connectable;
 		width: number;
 		source: DragSource;
+		selected?: Connectable[];
 		onopen: () => void;
 	} = $props();
 
@@ -85,6 +87,7 @@
 {#if item.type === 'Channel'}
 	<a
 		class="tile channel"
+		data-selection-item
 		href="/c/{item.slug}"
 		draggable="false"
 		title={item.title}
@@ -114,11 +117,14 @@
 {:else}
 	<div
 		class="wrap"
-		class:dragging={dnd.current?.kind === 'block' && dnd.current.blockId === item.id}
+		class:dragging={isBlockDragging(item.id)}
+		class:selected={selected.some((block) => block.id === item.id)}
+		data-selection-item
+		data-block-id={item.id}
 		draggable="true"
 		onmouseenter={play}
 		onmouseleave={stop}
-		use:blockdrag={{ item, source }}
+		use:blockdrag={{ item, source, selected }}
 		role="presentation"
 	>
 		<button class="tile" type="button" draggable="false" aria-label={itemTitle(item)} onclick={onopen}>
@@ -204,6 +210,27 @@
 
 	.wrap:hover {
 		box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.14);
+	}
+
+
+	.wrap.selected::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		background: var(--accent-soft);
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
+		pointer-events: none;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.wrap.selected::after { animation: selection-pulse 2s ease-in-out infinite; }
+	}
+
+	@keyframes selection-pulse {
+		0%, 100% { outline-color: var(--accent); }
+		50% { outline-color: color-mix(in srgb, var(--accent) 65%, transparent); }
 	}
 
 	.wrap.dragging {

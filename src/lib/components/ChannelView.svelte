@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { blockselection } from '$lib/blockselection';
 	import { goto } from '$app/navigation';
 	import { nav } from '$lib/nav.svelte';
 	import { droptarget, inview } from '$lib/actions';
@@ -15,6 +16,7 @@
 	import Grid from './Grid.svelte';
 	import BlockList from './BlockList.svelte';
 	import Viewer from './Viewer.svelte';
+	import MoveBlocksDialog from './MoveBlocksDialog.svelte';
 	import FolderIcon from './FolderIcon.svelte';
 	import RenameFolderInput from './RenameFolderInput.svelte';
 	import IconoirGlyph from './IconoirGlyph.svelte';
@@ -36,6 +38,23 @@
 
 	let scroller: HTMLElement | undefined = $state();
 	let openKey = $state<string | null>(null);
+	let selectedIds = $state<number[]>([]);
+	let moveSelection = $state<Block[] | null>(null);
+	let controlsOpen = $state(false);
+	let controlsElement = $state<HTMLDivElement>();
+	let controlsButton = $state<HTMLButtonElement>();
+	const rowHeight = $derived(ui.mobile ? prefs.mobileRowHeight : prefs.rowHeight);
+
+	function dismissControls(event: PointerEvent) {
+		if (controlsOpen && !controlsElement?.contains(event.target as Node)) controlsOpen = false;
+	}
+
+	function controlsKey(event: KeyboardEvent) {
+		if (event.key === 'Escape' && controlsOpen) {
+			controlsOpen = false;
+			controlsButton?.focus();
+		}
+	}
 
 	// The full record (has `can`) once fetched, overlaid with the sidebar's copy, which stays current
 	// when a folder is renamed by nesting or a block is added/moved.
@@ -55,6 +74,9 @@
 	$effect(() => {
 		slug;
 		openKey = null;
+		selectedIds = [];
+		moveSelection = null;
+		controlsOpen = false;
 		if (scroller) scroller.scrollTop = 0;
 	});
 
@@ -144,6 +166,7 @@
 	const itemCount = $derived(feed.total + (gridItems.length - feed.items.length));
 
 	const blocks = $derived(feed.items.filter((i): i is Block => i.type !== 'Channel'));
+	const selected = $derived(blocks.filter((block) => selectedIds.includes(block.id)));
 	const openIndex = $derived(
 		openKey === null ? -1 : blocks.findIndex((b) => `b${b.id}` === openKey)
 	);
@@ -200,6 +223,8 @@
 	}
 </script>
 
+<svelte:window onpointerdown={dismissControls} onkeydown={controlsKey} />
+
 <svelte:head>
 	<title>{title} · Seeds</title>
 </svelte:head>
@@ -252,57 +277,84 @@
 			{/if}
 		</div>
 
-		<div class="controls">
-			<div class="sort-control">
-				<select
-					value={prefs.sort}
-					onchange={(e) => (prefs.sort = e.currentTarget.value as SortKey)}
-					aria-label="Sort"
-				>
-					{#each sorts as s (s.value)}
-						<option value={s.value}>{s.label}</option>
-					{/each}
-				</select>
-				<svg class="sort-chevron" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
-			</div>
-
-			{#if prefs.viewMode === 'grid'}
-			<label class="zoom" title="Tile size">
-				<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1" /><rect x="9" y="2" width="5" height="5" rx="1" /><rect x="2" y="9" width="5" height="5" rx="1" /><rect x="9" y="9" width="5" height="5" rx="1" /></svg>
-				<input
-					type="range"
-					min={ROW_HEIGHT_MIN}
-					max={ROW_HEIGHT_MAX}
-					step="10"
-					bind:value={prefs.rowHeight}
-					aria-label="Tile size"
-				/>
-				<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="1.5" /></svg>
-			</label>
-			{/if}
-
-			<div class="view-toggle" role="group" aria-label="Channel view">
-				<button class="icon-btn" type="button" aria-label="Grid view" title="Grid view"
-					aria-pressed={prefs.viewMode === 'grid'} onclick={() => (prefs.viewMode = 'grid')}>
-					<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1" /><rect x="9" y="2" width="5" height="5" rx="1" /><rect x="2" y="9" width="5" height="5" rx="1" /><rect x="9" y="9" width="5" height="5" rx="1" /></svg>
-				</button>
-				<button class="icon-btn" type="button" aria-label="List view" title="List view"
-					aria-pressed={prefs.viewMode === 'list'} onclick={() => (prefs.viewMode = 'list')}>
-					<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M6 3h8M6 8h8M6 13h8M2 3h.5M2 8h.5M2 13h.5" /></svg>
-				</button>
-			</div>
-
-			<button class="icon-btn" type="button" onclick={refresh} title="Refresh" aria-label="Refresh">
-				<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5" /></svg>
+		<div class="controls-wrap" bind:this={controlsElement}>
+			<button class="icon-btn more-button" type="button" aria-label="View options"
+				aria-expanded={controlsOpen} aria-controls="view-controls" bind:this={controlsButton}
+				onclick={() => (controlsOpen = !controlsOpen)}>
+				<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
 			</button>
+			<div id="view-controls" class="controls" class:open={controlsOpen}>
+				<div class="sort-control">
+					<select
+						value={prefs.sort}
+						onchange={(e) => (prefs.sort = e.currentTarget.value as SortKey)}
+						aria-label="Sort"
+					>
+						{#each sorts as s (s.value)}
+							<option value={s.value}>{s.label}</option>
+						{/each}
+					</select>
+					<svg class="sort-chevron" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+				</div>
+
+				{#if prefs.viewMode === 'grid'}
+				<label class="zoom" title="Tile size">
+					<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1" /><rect x="9" y="2" width="5" height="5" rx="1" /><rect x="2" y="9" width="5" height="5" rx="1" /><rect x="9" y="9" width="5" height="5" rx="1" /></svg>
+					<input
+						type="range"
+						min={ROW_HEIGHT_MIN}
+						max={ROW_HEIGHT_MAX}
+						step="10"
+						value={rowHeight}
+						oninput={(event) => {
+							const value = Number(event.currentTarget.value);
+							if (ui.mobile) prefs.mobileRowHeight = value;
+							else prefs.rowHeight = value;
+						}}
+						aria-label="Tile size"
+					/>
+					<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="1.5" /></svg>
+				</label>
+				{/if}
+
+				<div class="view-toggle" role="group" aria-label="Channel view">
+					<button class="icon-btn" type="button" aria-label="Grid view" title="Grid view"
+						aria-pressed={prefs.viewMode === 'grid'} onclick={() => (prefs.viewMode = 'grid')}>
+						<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1" /><rect x="9" y="2" width="5" height="5" rx="1" /><rect x="2" y="9" width="5" height="5" rx="1" /><rect x="9" y="9" width="5" height="5" rx="1" /></svg>
+					</button>
+					<button class="icon-btn" type="button" aria-label="List view" title="List view"
+						aria-pressed={prefs.viewMode === 'list'} onclick={() => (prefs.viewMode = 'list')}>
+						<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M6 3h8M6 8h8M6 13h8M2 3h.5M2 8h.5M2 13h.5" /></svg>
+					</button>
+				</div>
+
+				<button class="icon-btn" type="button" onclick={refresh} title="Refresh" aria-label="Refresh">
+					<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5" /></svg>
+				</button>
+			</div>
 		</div>
 	</header>
 
-	<div class="scroller" bind:this={scroller}>
+	{#if selected.length}
+		<div class="selection-bar">
+			<span role="status">{selected.length} selected</span>
+			<button type="button" onclick={() => { controlsOpen = false; moveSelection = [...selected]; }}>Move to</button>
+			<button class="clear-selection" type="button" onclick={() => (selectedIds = [])} aria-label="Clear selection">Cancel</button>
+		</div>
+	{/if}
+
+	{#if moveSelection}
+		<MoveBlocksDialog blocks={moveSelection} {source} onclose={() => (moveSelection = null)}
+			onmoved={() => { selectedIds = []; moveSelection = null; }} />
+	{/if}
+
+	<div class="scroller" bind:this={scroller}
+		use:blockselection={{ selected: selectedIds, onselect: (ids) => (selectedIds = ids), key: `${slug}:${prefs.viewMode}` }}>
 		{#if prefs.viewMode === 'grid'}
 			<Grid
 				items={gridItems}
-				rowHeight={prefs.rowHeight}
+				{rowHeight}
+				{selected}
 				{source}
 				onopen={(key) => (openKey = key)}
 				onchannel={enterChannel}
@@ -310,6 +362,7 @@
 		{:else}
 			<BlockList
 				items={gridItems}
+				{selected}
 				{source}
 				onopen={(key) => (openKey = key)}
 				onchannel={enterChannel}
@@ -332,7 +385,7 @@
 				class="sentinel"
 				use:inview={{
 					onVisible: () => feed.loadMore(),
-					key: `${feed.items.length}:${feed.pages}:${prefs.rowHeight}:${prefs.viewMode}`
+					key: `${feed.items.length}:${feed.pages}:${rowHeight}:${prefs.viewMode}`
 				}}
 			></div>
 		{/if}
@@ -482,6 +535,28 @@
 		font-size: 12px;
 	}
 
+	.controls-wrap { position: relative; flex: none; }
+	.icon-btn.more-button { display: none; }
+
+	.selection-bar {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 6px 16px;
+		border-bottom: 1px solid var(--line);
+		flex: none;
+	}
+	.selection-bar button {
+		min-height: 40px;
+		padding: 0 14px;
+		border: 0;
+		border-radius: 7px;
+		background: var(--text);
+		color: var(--panel);
+	}
+	.selection-bar .clear-selection { margin-left: auto; background: var(--hover); color: var(--text); }
+	.selection-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 	.controls {
 		flex: none;
 		display: flex;
@@ -624,6 +699,42 @@
 		background: var(--accent-soft);
 		box-shadow: inset 0 0 0 2px var(--accent);
 		pointer-events: none;
+	}
+
+	@media (max-width: 900px) {
+		header { height: auto; min-height: 48px; gap: 8px; padding: 0 8px; }
+		.heading { flex: 1; flex-wrap: wrap; gap: 6px; padding: 6px 0; }
+		.breadcrumbs { flex-basis: 100%; font-size: 12px; }
+		.count { font-size: 11px; }
+		.convert { height: 36px; }
+		.scroller { padding: 4px 8px max(16px, env(safe-area-inset-bottom)); }
+				.scroller :global([data-block-id]) { -webkit-user-select: none; user-select: none; }
+		.icon-btn.more-button { display: grid; }
+		.icon-btn { width: 44px; height: 44px; }
+		.controls {
+			display: none;
+			position: absolute;
+			top: 100%;
+			right: 0;
+			z-index: 40;
+			width: 252px;
+			padding: 12px;
+			border: 1px solid var(--line);
+			border-radius: 10px;
+			background: var(--panel);
+			box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+			flex-wrap: wrap;
+			gap: 12px;
+		}
+		.controls.open { display: flex; }
+		.sort-control, .zoom { width: 100%; }
+		select { width: 100%; height: 44px; font-size: 16px; }
+		.zoom { min-height: 44px; }
+		input[type='range'] { flex: 1; height: 8px; }
+		input[type='range']::-webkit-slider-thumb { width: 24px; height: 24px; }
+		input[type='range']::-moz-range-thumb { width: 24px; height: 24px; }
+		.selection-bar { padding: 6px 8px; }
+		.selection-bar button { min-height: 44px; }
 	}
 
 	.drop-hint span {

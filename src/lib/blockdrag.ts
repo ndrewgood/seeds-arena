@@ -4,7 +4,7 @@ import { BLOCK_MIME, blockDragFor, createBlockDragPreview, dnd, type DragSource 
 
 // macOS can suppress native drop events while Command is held. Track internal block
 // gestures with pointers and reuse the existing drop-target protocol instead.
-export const blockdrag: Action<HTMLElement, { item: Connectable; source: DragSource }> = (node, params) => {
+export const blockdrag: Action<HTMLElement, { item: Connectable; source: DragSource; selected?: Connectable[] }> = (node, params) => {
 	let current = params;
 	let pointer: number | null = null;
 	let startX = 0, startY = 0, x = 0, y = 0;
@@ -96,7 +96,7 @@ export const blockdrag: Action<HTMLElement, { item: Connectable; source: DragSou
 		setModifiers(e);
 		if (!transfer) {
 			if (Math.hypot(x - startX, y - startY) < 6) return;
-			const payload = blockDragFor(current.item, current.source);
+			const payload = blockDragFor(current.item, current.source, current.selected);
 			if (!payload) { finish(); return; }
 			transfer = new DataTransfer();
 			transfer.setData(BLOCK_MIME, JSON.stringify(payload));
@@ -104,7 +104,7 @@ export const blockdrag: Action<HTMLElement, { item: Connectable; source: DragSou
 			dnd.current = payload;
 			savedStyle = { userSelect: document.body.style.userSelect, cursor: document.body.style.cursor };
 			document.body.style.userSelect = 'none';
-			preview = createBlockDragPreview(node);
+			preview = createBlockDragPreview(node, payload.blocks?.length ?? 1);
 			if (preview) document.body.appendChild(preview);
 			window.addEventListener('click', stopClick, true);
 		}

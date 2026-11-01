@@ -16,6 +16,8 @@ export interface BlockDrag {
 	connectionId: number | null;
 	sourceSlug: string;
 	sourceId: number | null;
+	/** All selected blocks, including the anchor above, from the same source channel. */
+	blocks?: { blockId: number; connectionId: number | null }[];
 }
 
 export interface FolderDrag {
@@ -45,7 +47,7 @@ class Dnd {
 export const dnd = new Dnd();
 
 /** A small translucent snapshot, shared by grid cards, table rows and viewer images. */
-export function createBlockDragPreview(node: HTMLElement): HTMLElement | null {
+export function createBlockDragPreview(node: HTMLElement, count = 1): HTMLElement | null {
 	const { width, height } = node.getBoundingClientRect();
 	if (!width || !height) return null;
 
@@ -78,22 +80,55 @@ export function createBlockDragPreview(node: HTMLElement): HTMLElement | null {
 	} else {
 		preview.appendChild(clone);
 	}
+	if (count > 1) {
+		const badge = document.createElement('span');
+		badge.textContent = String(count);
+		Object.assign(badge.style, {
+			position: 'absolute', top: '6px', right: '6px',
+			minWidth: '22px', height: '22px', padding: '0 6px',
+			display: 'grid', placeItems: 'center', boxSizing: 'border-box',
+			borderRadius: '11px', background: '#333', color: '#fff',
+			font: '600 12px/1 system-ui, sans-serif',
+			boxShadow: '0 1px 4px rgba(0, 0, 0, 0.2)'
+		});
+		preview.appendChild(badge);
+	}
 	return preview;
 }
 
-export function blockDragFor(item: Connectable, source: DragSource): BlockDrag | null {
+/** Selection entries must carry their connections in `source`, not connections from another channel. */
+export function blockDragFor(item: Connectable, source: DragSource, selected?: Connectable[]): BlockDrag | null {
 	if (item.type === 'Channel') return null;
-	return {
+	const payload: BlockDrag = {
 		kind: 'block',
 		blockId: item.id,
 		connectionId: item.connection?.id ?? null,
 		sourceSlug: source.slug,
 		sourceId: source.id
 	};
+	if (selected?.some((block) => block.type !== 'Channel' && block.id === item.id)) {
+		const blocks = new Map<number, { blockId: number; connectionId: number | null }>();
+		for (const block of selected) {
+			if (block.type === 'Channel' || blocks.has(block.id)) continue;
+			blocks.set(block.id, {
+				blockId: block.id,
+				connectionId: block.id === item.id ? payload.connectionId : block.connection?.id ?? null
+			});
+		}
+		if (blocks.size > 1) payload.blocks = [...blocks.values()];
+	}
+	return payload;
 }
 
-export function startBlockDrag(e: DragEvent, item: Connectable, source: DragSource) {
-	const payload = blockDragFor(item, source);
+export function isBlockDragging(id: number): boolean {
+	const current = dnd.current;
+	return current?.kind === 'block' && (current.blocks
+		? current.blocks.some((block) => block.blockId === id)
+		: current.blockId === id);
+}
+
+export function startBlockDrag(e: DragEvent, item: Connectable, source: DragSource, selected?: Connectable[]) {
+	const payload = blockDragFor(item, source, selected);
 	if (!payload || !e.dataTransfer) return;
 	e.dataTransfer.clearData();
 	e.dataTransfer.effectAllowed = 'copyMove';
@@ -101,7 +136,7 @@ export function startBlockDrag(e: DragEvent, item: Connectable, source: DragSour
 	dnd.current = payload;
 	dnd.updateModifiers(e);
 	if (typeof HTMLElement !== 'undefined' && e.currentTarget instanceof HTMLElement) {
-		const preview = createBlockDragPreview(e.currentTarget);
+		const preview = createBlockDragPreview(e.currentTarget, payload.blocks?.length ?? 1);
 		if (preview) {
 			document.body.appendChild(preview);
 			e.dataTransfer.setDragImage(preview, 12, 12);
@@ -124,7 +159,24 @@ export function startFolderDrag(e: DragEvent, channelId: number) {
 export function readBlockDrag(dt: DataTransfer): BlockDrag | null {
 	try {
 		const parsed = JSON.parse(dt.getData(BLOCK_MIME));
-		return parsed?.kind === 'block' && typeof parsed.blockId === 'number' ? parsed : null;
+		const validId = (id: unknown) => typeof id === 'number' && Number.isSafeInteger(id) && id > 0;
+		const validConnection = (id: unknown) => id === null || validId(id);
+		if (parsed?.kind !== 'block' || !validId(parsed.blockId) || !validConnection(parsed.connectionId)
+			|| typeof parsed.sourceSlug !== 'string' || !parsed.sourceSlug
+			|| !validConnection(parsed.sourceId)) return null;
+		if (parsed.blocks !== undefined) {
+			if (!Array.isArray(parsed.blocks) || !parsed.blocks.length) return null;
+			const blocks: NonNullable<BlockDrag['blocks']> = [];
+			for (const block of parsed.blocks) {
+				if (!block || !validId(block.blockId) || !validConnection(block.connectionId)) return null;
+				const duplicate = blocks.find((entry) => entry.blockId === block.blockId);
+				if (duplicate && duplicate.connectionId !== block.connectionId) return null;
+				if (!duplicate) blocks.push({ blockId: block.blockId, connectionId: block.connectionId });
+			}
+			if (!blocks.some((block) => block.blockId === parsed.blockId && block.connectionId === parsed.connectionId)) return null;
+			parsed.blocks = blocks;
+		}
+		return parsed;
 	} catch {
 		return null;
 	}

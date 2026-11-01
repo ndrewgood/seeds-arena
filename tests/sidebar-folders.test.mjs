@@ -29,7 +29,7 @@ before(async () => {
 					// Expose the real event closures during SSR tests without a browser dependency.
 					return code.replace('</script>', `
 						globalThis.__sidebarFolderHandlers = {
-							clickFolder, doubleClickFolder, getLastRevealed: () => lastRevealed,
+							clickFolder, getLastRevealed: () => lastRevealed,
 														openSearch, closeSearch, focusOnMount,
 														getSearchState: () => ({ open: searchOpen, query }),
 														setQuery: (value) => { query = value; }
@@ -73,12 +73,7 @@ function fixture() {
 	html();
 	return { node: channels.folders.all.find((node) => node.channel.id === 1), ...globalThis.__sidebarFolderHandlers };
 }
-function doubleClick(handlers, node) {
-	const event = { prevented: false, preventDefault() { this.prevented = true; } };
-	handlers.clickFolder({ detail: 2 }, node);
-	handlers.doubleClickFolder(event, node);
-	assert.equal(event.prevented, true);
-}
+const click = (handlers, node, overrides = {}) => handlers.clickFolder({ button: 0, detail: 1, ...overrides }, node);
 
 test('sidebar starts with the Seeds home button and right-hand search control, not the filter field', () => {
 	const body = html();
@@ -108,7 +103,7 @@ test('favicon is the seedling emoji without a background or other artwork', asyn
 	assert.doesNotMatch(svg, /<rect|<path/);
 });
 
-test('root leaves have no chevron gutter while parents and nested leaves keep theirs', () => {
+test('folder icons stay on the left and parent toggles replace counts on the right', () => {
 	channels.items = [folder(1, 'A'), folder(2, 'A > B'), folder(3, 'Standalone')];
 	ui.expand([1]);
 	const body = html();
@@ -116,38 +111,60 @@ test('root leaves have no chevron gutter while parents and nested leaves keep th
 	assert.ok(rootLeaf);
 	assert.match(rootLeaf, /padding-left: 10px/);
 	assert.doesNotMatch(rootLeaf, /class="chevron/);
-	assert.match(row(body, 1), /padding-left: 4px/);
-	assert.match(row(body, 1), /class="chevron/);
-	assert.match(row(body, 2), /padding-left: 18px/);
-	assert.match(row(body, 2), /class="chevron[^"\n]*hidden/);
+	const parent = row(body, 1);
+	assert.match(parent, /padding-left: 10px/);
+	assert.match(parent, /class="folder-toggle/);
+	assert.match(parent, /class="folder-slot/);
+	assert.match(parent, /<\/a>[\s\S]*<button[^>]*class="folder-toggle/);
+	assert.doesNotMatch(parent, /class="count/);
+	assert.doesNotMatch(rootLeaf, /class="count|class="folder-toggle/);
+	assert.match(parent, /aria-label="Collapse folder" aria-expanded="true"/);
+	assert.equal((parent.match(/class="folder-icon/g) ?? []).length, 1);
+	assert.match(row(body, 2), /padding-left: 24px/);
+	assert.match(row(body, 2), /class="folder-slot/);
+	assert.doesNotMatch(row(body, 2), /class="count/);
+	assert.doesNotMatch(row(body, 2), /class="folder-toggle/);
 });
 
-test('double-click expands a closed folder and collapses an open folder', () => {
+test('one click expands a closed folder and collapses an open folder', () => {
 	const handlers = fixture();
 	const { node } = handlers;
 	nav.push({ slug: 'origin', title: 'Origin' });
-	handlers.clickFolder({ detail: 1 }, node);
+	click(handlers, node);
 	assert.deepEqual(nav.trail, []);
-	doubleClick(handlers, node);
 	assert.equal(ui.isExpanded(1), true);
-	handlers.clickFolder({ detail: 1 }, node);
-	doubleClick(handlers, node);
-	assert.equal(ui.isExpanded(1), false);
 	assert.equal(handlers.getLastRevealed(), node.channel.slug);
+	click(handlers, node);
+	assert.equal(ui.isExpanded(1), false);
 });
 
-test('first-click navigation auto-expansion does not reverse the intended double-click result', () => {
+test('the second click of a double-click does not reverse the first toggle', () => {
 	const handlers = fixture();
-	handlers.clickFolder({ detail: 1 }, handlers.node);
-	ui.expand([1]);
-	doubleClick(handlers, handlers.node);
+	click(handlers, handlers.node);
+	click(handlers, handlers.node, { detail: 2 });
 	assert.equal(ui.isExpanded(1), true);
 });
 
-test('double-clicking a leaf does not add expansion state', () => {
+test('keyboard activation toggles folders', () => {
+	const handlers = fixture();
+	click(handlers, handlers.node, { detail: 0 });
+	assert.equal(ui.isExpanded(1), true);
+});
+
+test('modified clicks leave expansion and navigation history alone', () => {
+	const handlers = fixture();
+	nav.push({ slug: 'origin', title: 'Origin' });
+	for (const overrides of [{ metaKey: true }, { ctrlKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+		click(handlers, handlers.node, overrides);
+		assert.equal(ui.isExpanded(1), false);
+		assert.equal(nav.trail.length, 1);
+		assert.equal(handlers.getLastRevealed(), undefined);
+	}
+});
+
+test('clicking a leaf does not add expansion state', () => {
 	const handlers = fixture();
 	const leaf = channels.folders.all.find((node) => node.channel.id === 2);
-	handlers.clickFolder({ detail: 1 }, leaf);
-	doubleClick(handlers, leaf);
+	click(handlers, leaf);
 	assert.equal(ui.isExpanded(2), false);
 });

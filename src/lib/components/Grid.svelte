@@ -12,6 +12,7 @@
 		items,
 		rowHeight,
 		source,
+		selected = [],
 		onopen,
 		onchannel
 	}: {
@@ -19,6 +20,7 @@
 		rowHeight: number;
 		/** The channel these items are shown in; blocks dragged out of the grid are moved away from it. */
 		source: DragSource;
+		selected?: Connectable[];
 		onopen: (key: string) => void;
 		onchannel: (channel: Channel) => void;
 	} = $props();
@@ -55,6 +57,7 @@
 				<Tile
 					{item}
 					{source}
+					{selected}
 					width={box.w}
 					onopen={() => (item.type === 'Channel' ? onchannel(item) : onopen(keyOf(item)))}
 				/>

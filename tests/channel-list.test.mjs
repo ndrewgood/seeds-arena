@@ -110,6 +110,36 @@ test('grid tiles without images do not expose a download button', () => {
 	assert.doesNotMatch(body, /aria-label="Download/);
 });
 
+test('grid and list render selection and dragging state for every block in a batch', () => {
+	const second = { ...block, id: 43, connection: { id: 100 } };
+	const selected = [block, second];
+	drag.dnd.current = drag.blockDragFor(block, source, selected);
+	try {
+		for (const item of selected) {
+			const { body } = render(Tile, { props: { item, selected, source, width: 200, onopen() {} } });
+			assert.match(body, /class="wrap[^\"]*dragging[^\"]*selected/);
+			assert.match(body, new RegExp(`data-block-id="${item.id}"`));
+			assert.match(body, /data-selection-item/);
+		}
+		const { body } = render(BlockList, { props: { items: selected, selected, source, onopen() {}, onchannel() {} } });
+		assert.equal((body.match(/class="[^\"]*dragging[^\"]*selected/g) ?? []).length, 2);
+		assert.match(body, /data-block-id="42"/);
+		assert.match(body, /data-block-id="43"/);
+	} finally {
+		drag.dnd.reset();
+	}
+});
+
+test('channel tiles and rows are excluded from marquee selection', () => {
+	const channel = { id: 7, type: 'Channel', title: 'Research', slug: 'research', counts: { contents: 3 } };
+	const { body } = render(Tile, { props: { item: channel, source, width: 200, onopen() {} } });
+	assert.match(body, /data-selection-item/);
+	assert.doesNotMatch(body, /data-block-id/);
+	const list = table([channel]);
+	assert.match(list, /data-selection-item/);
+	assert.doesNotMatch(list, /data-block-id/);
+});
+
 test('row drag handler preserves the connection and source needed to move into folders', () => {
 	const data = new Map();
 	const dataTransfer = {
