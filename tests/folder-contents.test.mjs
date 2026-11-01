@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, afterEach, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
+import { parse } from 'svelte/compiler';
 import { createServer } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
@@ -95,6 +97,24 @@ test('folder tile and list labels use recursive totals and update with the chann
 	assert.match(tile(), /5 blocks, 2 folders/);
 	channels.retitle(new Map([[3, '🌱 Elsewhere > C']]));
 	assert.match(list(), /0 blocks, 1 folder/);
+});
+
+test('folder previews shrink within their tiles and reserve a separate label area', async () => {
+	const source = await readFile(new URL('../src/lib/components/Tile.svelte', import.meta.url), 'utf8');
+	const rules = parse(source).css.children.filter((node) => node.type === 'Rule');
+	const declarations = (selector) => {
+		const rule = rules.find((node) => source.slice(node.prelude.start, node.prelude.end) === selector);
+		assert.ok(rule, selector);
+		return Object.fromEntries(rule.block.children.filter((node) => node.type === 'Declaration').map((node) => [node.property, node.value]));
+	};
+	const thumbs = declarations('.thumbs');
+	assert.equal(thumbs.flex, '1 1 0');
+	assert.equal(thumbs['min-height'], '0');
+	assert.equal(thumbs['grid-template-columns'], 'repeat(2, minmax(0, 1fr))');
+	assert.equal(thumbs['grid-auto-rows'], 'minmax(0, 1fr)');
+	assert.equal(thumbs.overflow, 'hidden');
+	assert.equal(declarations('.thumbs.one')['grid-template-columns'], 'minmax(0, 1fr)');
+	assert.equal(declarations('.channel .label').flex, 'none');
 });
 
 test('entirely empty subtrees are cached immediately without occupying fetch slots', () => {

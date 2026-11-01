@@ -39,6 +39,7 @@
 	let scroller: HTMLElement | undefined = $state();
 	let openKey = $state<string | null>(null);
 	let selectedIds = $state<number[]>([]);
+	let selectionDragging = $state(false);
 	let moveSelection = $state<Block[] | null>(null);
 	let controlsOpen = $state(false);
 	let controlsElement = $state<HTMLDivElement>();
@@ -335,7 +336,7 @@
 		</div>
 	</header>
 
-	{#if selected.length}
+	{#if selected.length && !selectionDragging}
 		<div class="selection-bar">
 			<span role="status">{selected.length} selected</span>
 			<button type="button" onclick={() => { controlsOpen = false; moveSelection = [...selected]; }}>Move to</button>
@@ -349,7 +350,12 @@
 	{/if}
 
 	<div class="scroller" bind:this={scroller}
-		use:blockselection={{ selected: selectedIds, onselect: (ids) => (selectedIds = ids), key: `${slug}:${prefs.viewMode}` }}>
+		use:blockselection={{
+					selected: selectedIds,
+					onselect: (ids) => (selectedIds = ids),
+					onmarquee: (active) => (selectionDragging = active),
+					key: `${slug}:${prefs.viewMode}`
+				}}>
 		{#if prefs.viewMode === 'grid'}
 			<Grid
 				items={gridItems}

@@ -140,8 +140,8 @@ function fixture(selected = [9], { clock = false, callout = '' } = {}) {
 		return element;
 	};
 	const first = item(1, 40, 40), second = item(2, 120, 80), channel = item(null, 200, 120);
-	const selections = [];
-	const params = { selected, key: 'channel-a', onselect: (ids) => selections.push(ids) };
+	const selections = [], marquee = [];
+	const params = { selected, key: 'channel-a', onselect: (ids) => selections.push(ids), onmarquee: (active) => marquee.push(active) };
 	if (callout) node.style.setProperty('-webkit-touch-callout', callout, 'important');
 	const action = blockselection(node, params);
 	cleanups.push(() => action.destroy());
@@ -172,7 +172,7 @@ function fixture(selected = [9], { clock = false, callout = '' } = {}) {
 		assert.equal(node.style.getPropertyValue('-webkit-touch-callout'), destroyed ? callout : 'none');
 		if (destroyed && callout) assert.equal(node.style.getPropertyPriority('-webkit-touch-callout'), 'important');
 	};
-	return { window, document, node, first, second, channel, item, params, selections, action, point, emit, start, frames, tick, assertClean, advance, timers };
+	return { window, document, node, first, second, channel, item, params, selections, marquee, action, point, emit, start, frames, tick, assertClean, advance, timers };
 }
 
 test('marquee is fixed on body, intersects only numeric blocks, and uses the release position', () => {
@@ -661,4 +661,49 @@ test('same-key updates provide the live selection/callback to a pending touch ho
 	assert.equal(f.emit('click', {}, f.first).defaultPrevented, false);
 	f.advance(500);
 	f.assertClean();
+});
+
+
+test('marquee state starts after the threshold and ends only after the release selection is published', () => {
+	const f = fixture([]);
+	const events = [];
+	f.action.update({ ...f.params, onmarquee: (active) => events.push({ active, selection: f.selections.at(-1) }) });
+	f.emit('pointerdown', {}, f.node);
+	f.emit('pointermove', f.point(13, 13));
+	assert.deepEqual(events, []);
+	f.emit('pointermove', f.point(100, 75));
+	assert.deepEqual(events.map((event) => event.active), [true]);
+	assert.deepEqual(f.selections.at(-1), [1]);
+	f.emit('pointermove', f.point(250, 170));
+	assert.deepEqual(events.map((event) => event.active), [true]);
+	f.emit('pointerup', f.point(250, 170));
+	assert.deepEqual(events, [{ active: true, selection: undefined }, { active: false, selection: [1, 2] }]);
+});
+
+for (const ending of ['pointercancel', 'blur', 'Escape', 'key change', 'destroy']) {
+	test(`marquee ${ending} clears active state without leaving the control bar hidden`, () => {
+		const f = fixture();
+		f.start();
+		assert.deepEqual(f.marquee, [true]);
+		if (ending === 'Escape') f.emit('keydown', { key: 'Escape' });
+		else if (ending === 'key change') f.action.update({ ...f.params, key: 'channel-b' });
+		else if (ending === 'destroy') f.action.destroy();
+		else f.emit(ending);
+		assert.deepEqual(f.marquee, [true, false]);
+		f.action.destroy();
+		assert.deepEqual(f.marquee, [true, false]);
+	});
+}
+
+test('ordinary clicks and touch selection never report a desktop marquee', () => {
+	const f = fixture([], { clock: true });
+	f.emit('pointerdown', {}, f.node);
+	f.emit('pointerup');
+	assert.deepEqual(f.marquee, []);
+	f.emit('pointerdown', { pointerType: 'touch' }, f.first);
+	f.advance(500);
+	assert.deepEqual(f.selections.at(-1), [1]);
+	assert.deepEqual(f.marquee, []);
+	f.emit('pointerup', { pointerType: 'touch' });
+	assert.deepEqual(f.marquee, []);
 });

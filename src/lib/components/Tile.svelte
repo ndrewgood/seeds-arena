@@ -401,6 +401,8 @@
 	}
 
 	.channel .label {
+		flex: none;
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
@@ -415,17 +417,19 @@
 
 	/* A 2x2 contact sheet of what's inside. */
 	.thumbs {
-		flex: 1;
+		flex: 1 1 0;
+		min-width: 0;
 		min-height: 0;
 		width: 100%;
 		display: grid;
-		grid-template-columns: 1fr 1fr;
-		grid-auto-rows: 1fr;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-auto-rows: minmax(0, 1fr);
 		gap: 3px;
+		overflow: hidden;
 	}
 
 	.thumbs.one {
-		grid-template-columns: 1fr;
+		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.thumbs img {

@@ -1,6 +1,11 @@
 import type { Action } from 'svelte/action';
 
-type Selection = { selected: number[]; onselect: (ids: number[]) => void; key: string };
+type Selection = {
+	selected: number[];
+	onselect: (ids: number[]) => void;
+	onmarquee?: (active: boolean) => void;
+	key: string;
+};
 
 const excluded = '[data-selection-item], [data-block-id], a, button, input, textarea, select, [contenteditable], thead';
 const editable = 'input, textarea, select, [contenteditable]';
@@ -144,6 +149,7 @@ export const blockselection: Action<HTMLElement, Selection> = (node, params) => 
 			clickTimer = setTimeout(clearClick, block ? 700 : 0);
 		}
 		if (restore) publish(original);
+		if (active) current.onmarquee?.(false);
 	}
 
 	function move(e: PointerEvent) {
@@ -164,6 +170,7 @@ export const blockselection: Action<HTMLElement, Selection> = (node, params) => 
 			document.body.appendChild(overlay);
 			userSelect = document.body.style.userSelect;
 			document.body.style.userSelect = 'none';
+			current.onmarquee?.(true);
 		}
 		e.preventDefault();
 		render();
